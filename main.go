@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"runtime"
 	"strconv"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -105,16 +106,29 @@ func getP24Bussines() float32 {
 	return float32(rate)
 }
 
-func HandleRequest(ctx context.Context) (string, error) {
-
+// Only for local development
+func localRun() {
 	mono := getMono()
 	pb24 := getP24Bussines()
-	// fmt.Printf("Mono %v\n", mono)
-	// fmt.Printf("PB24 %v\n", pb24)
+	diff := mono - pb24
+	fmt.Printf("Mono: %v\n", mono)
+	fmt.Printf("PB24: %v\n", pb24)
+	fmt.Printf("Exchange rate difference is: %v\n", diff)
+	publishToSNS(fmt.Sprint(diff))
+}
 
-	return fmt.Sprintf("%v", mono-pb24), nil
+func HandleRequest(ctx context.Context) (string, error) {
+	diff := getMono() - getP24Bussines()
+	publishToSNS(fmt.Sprint(diff))
+	return fmt.Sprintf("%v", diff), nil
 }
 
 func main() {
-	lambda.Start(HandleRequest)
+	// For local development
+	if runtime.GOOS == "darwin" {
+		localRun()
+	} else {
+		lambda.Start(HandleRequest)
+	}
+
 }
