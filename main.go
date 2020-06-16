@@ -6,51 +6,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"runtime"
 	"strconv"
 
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/hashicorp/go-retryablehttp"
 )
-
-const (
-	apiCurrencyMono        = "https://api.monobank.ua/bank/currency"
-	apiCurrencyP24Bussines = "https://otp24.privatbank.ua/v3/api/1/info/currency/get"
-	// ISO 4217
-	USD = 840
-	UAH = 980
-)
-
-//Mono
-type MonoPair struct {
-	CurrencyCodeA int
-	CurrencyCodeB int
-	Date          int64
-	RateBuy       float32
-	RateSell      float32
-}
-
-type MonoCurrency struct {
-	Pairs []MonoPair
-}
-
-//P24Bussines
-type P24BussinesCurrency struct {
-	USD P24BussinesBuyAndSell
-	EUR P24BussinesBuyAndSell
-}
-
-type P24BussinesBuyAndSell struct {
-	B P24BussinesRate
-	S P24BussinesRate
-}
-
-type P24BussinesRate struct {
-	Date      string
-	Rate      string
-	RateDelta string `json:"rate_delta"`
-	NbuRate   string
-}
 
 func (c MonoCurrency) getPair(A int, B int) (MonoPair, error) {
 	for _, pair := range c.Pairs {
@@ -62,7 +23,7 @@ func (c MonoCurrency) getPair(A int, B int) (MonoPair, error) {
 }
 
 func getHTTP(api string) []byte {
-	res, errHTTP := http.Get(api)
+	res, errHTTP := retryablehttp.Get(api)
 	if errHTTP != nil {
 		log.Fatal(errHTTP)
 	}
@@ -106,21 +67,37 @@ func getP24Bussines() float32 {
 	return float32(rate)
 }
 
+func getInterBank() float32 {
+	respBody := getHTTP(apiInterBank)
+
+	var interBank [][]string
+	errJSON := json.Unmarshal(respBody, &interBank)
+	if errJSON != nil {
+		fmt.Println("error:", errJSON)
+	}
+	rateNow, _ := strconv.ParseFloat(interBank[len(interBank)-1][1], 32)
+
+	return float32(rateNow)
+}
+
 // Only for local development
 func localRun() {
+	output := formatOutput()
+	fmt.Println(output)
+	publishToSNS(output)
+}
+
+func formatOutput() string {
 	mono := getMono()
 	pb24 := getP24Bussines()
-	diff := mono - pb24
-	fmt.Printf("Mono: %v\n", mono)
-	fmt.Printf("PB24: %v\n", pb24)
-	fmt.Printf("Exchange rate difference is: %v\n", diff)
-	publishToSNS(fmt.Sprint(diff))
+	interBank := getInterBank()
+	return fmt.Sprintf("МоноБанк:\t%.2f\nПриват24:\t%.2f\nРізниця:\t%.2f\nМіжбанк:\t%.2f\n", mono, pb24, mono-pb24, interBank)
 }
 
 func HandleRequest(ctx context.Context) (string, error) {
-	diff := getMono() - getP24Bussines()
-	publishToSNS(fmt.Sprint(diff))
-	return fmt.Sprintf("%v", diff), nil
+	output := formatOutput()
+	publishToSNS(output)
+	return output, nil
 }
 
 func main() {
